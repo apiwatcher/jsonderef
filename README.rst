@@ -1,10 +1,7 @@
 jsonderef
 ==========
 
-A json dereferencing tool for python.
-
-Currently only local references are supported but file and remote references
-are comming soon.
+A json dereferencing library for python.
 
 Json pointers evaluation is compliant with rfc 6901
 (https://tools.ietf.org/html/rfc6901).
@@ -35,3 +32,17 @@ Usage
   dereferencer = JsonDeref(document)
 
   print dereferencer.deref(max_deref_depth=5)
+
+Tests
+======
+
+Clone the repo, install dependencies and run nose.
+
+.. code-block:: shell
+
+  virtualenv env
+  . env/bin/activate
+
+  pip install -r requirements.txt
+
+  nosetests tests.py

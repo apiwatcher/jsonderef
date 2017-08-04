@@ -1,5 +1,7 @@
 import copy
+import requests
 
+from requests.exceptions import RequestException
 
 class JsonDerefException(Exception):
     """
@@ -16,11 +18,11 @@ class RefNotFound(JsonDerefException):
 
 class JsonDeref(object):
 
-    def __init__(self, document, raise_on_not_found=True, not_found=None):
+    def __init__(self, raise_on_not_found=True, not_found=None,
+        requests_timeout=10
+    ):
         """ Initializes dereferencer.
 
-        :param document: Document to be processed.
-        :type document: Anything which can be serilized as json :)
         :param raise_on_not_found: If true, RefNotFound is raised if referenced
             object is not found.
         :type raise_on_not_found: Boolean
@@ -28,12 +30,17 @@ class JsonDeref(object):
             raise_on_not_found is False, this value will be used instead of
             referenced object.
         :type raise_on_not_found: Anything
+        :param requests_timeout: Timeout set for requests in case of fetching
+            remote urls.
+        :type requests_timeout: Integer
         """
-        self.doc = document
-        self.raise_on_not_found = raise_on_not_found
-        self.not_found = not_found
+        self._cache = {}
 
-    def deref(self, max_deref_depth=10):
+        self._raise_on_not_found = raise_on_not_found
+        self._not_found = not_found
+        self._timeout = requests_timeout
+
+    def deref(self, document, max_deref_depth=10):
         """ Returns dereferenced object.
 
         Original object is left intact, always new copy of the object is
@@ -42,7 +49,7 @@ class JsonDeref(object):
         :param max_deref_depth: How many times do the recursive dereference.
         type: Integer or None
         """
-        return self._do_deref(self.doc, max_deref_depth)
+        return self._do_deref(document, document, max_deref_depth)
 
     @staticmethod
     def _parse_ref_string(ref):
@@ -53,12 +60,21 @@ class JsonDeref(object):
         if ref.startswith("#"):
             ref_object["type"] = "local"
             ref = ref[1:]
+        elif ref.startswith("http"):
+            ref_object["type"] = "remote"
+            hash_index = ref.rfind("#")
+            ref_object["url"] = ref[:hash_index]
+            ref = ref[hash_index+1:]
         else:
             raise JsonDerefException(
-                "Only local references are supported for now."
+                "Cannot resolve reference '{0}'".format(ref)
             )
 
         ref_object["path"] = []
+        if ref != "" and not ref.startswith('/'):
+            raise JsonDerefException(
+                "Path in the reference must start with '/' ({0}).".format(ref)
+            )
         path = ref.split("/")
         # Rfc stuff
         for item in path:
@@ -68,42 +84,95 @@ class JsonDeref(object):
 
         return ref_object
 
-    def _get_referenced_object(self, ref_obj):
+    def _get_url_json(self, url, store=True):
+        """
+        Returns object stored at url
+        """
+        doc = self._cache.get(url, None)
+        if doc is not None:
+            return doc
+
+        try:
+            rsp = requests.get(url, timeout=self._timeout)
+            if rsp.status_code != 200:
+                raise RefNotFound(
+                    "Could not get {0}, status code {1}".format(
+                        url, rsp.status_code
+                    )
+                )
+
+            doc = rsp.json()
+            self._cache[url] = doc
+            return doc
+
+        except ValueError as exc:
+            raise JsonDerefException(
+                "Document at {0} is not a valid json. "
+                "Parser says '{1}'.".format(
+                    url, exc.message
+                )
+            )
+        except RequestException as e:
+            raise RefNotFound(
+                "Could not get {0}, error {1}".format(
+                    url, e.message
+                )
+            )
+
+    def _get_referenced_object(self, cur_root, ref_obj):
         """
         Returns referenced object
         """
+        actual_root = None
+
         if ref_obj["type"] == "local":
-            if len(ref_obj["path"]) == 1:
-                return copy.deepcopy(self.doc)
-            else:
-                try:
-                    cur_obj = self.doc
-                    for p in ref_obj["path"][1:]:
-                        if isinstance(cur_obj, dict):
-                            cur_obj = cur_obj[str(p)]
-                        elif isinstance(cur_obj, list):
-                            cur_obj = cur_obj[int(p)]
+            actual_root = cur_root
+        elif ref_obj["type"] == "remote":
+            try:
+                actual_root = self._get_url_json(ref_obj["url"])
+            except RefNotFound:
+                if self._raise_on_not_found:
+                    raise
+                else:
+                    return {
+                        "root": cur_root,
+                        "obj": copy.deepcopy(self._not_found)
+                    }
 
-                    return copy.deepcopy(cur_obj)
-                except (KeyError, IndexError):
-                    if self.raise_on_not_found:
-                        raise RefNotFound(
-                            "Referenced object in path #{0}"
-                            " has not been found".format(
-                                "/".join(ref_obj["path"])
-                            )
-                        )
-                    else:
-                        return copy.deepcopy(self.not_found)
+        if len(ref_obj["path"]) == 1:
+            return {
+                "root": actual_root,
+                "obj": actual_root
+            }
         else:
-            if self.raise_on_not_found:
-                raise JsonDerefException(
-                    "Only local references are supported for now."
-                )
-            else:
-                return copy.deepcopy(self.not_found)
+            cur_obj = actual_root
+            try:
+                for p in ref_obj["path"][1:]:
+                    if isinstance(cur_obj, dict):
+                        cur_obj = cur_obj[str(p)]
+                    elif isinstance(cur_obj, list):
+                        cur_obj = cur_obj[int(p)]
 
-    def _do_deref(self, current_obj, remaining_depth):
+                return {
+                    "root": actual_root,
+                    "obj": cur_obj
+                }
+            except (KeyError, IndexError):
+                if self._raise_on_not_found:
+                    raise RefNotFound(
+                        "Referenced object in path #{0}"
+                        " has not been found".format(
+                            "/".join(ref_obj["path"])
+                        )
+                    )
+                else:
+                    return {
+                        "root": cur_root,
+                        "obj": copy.deepcopy(self._not_found)
+                    }
+
+
+    def _do_deref(self, current_root, current_obj, remaining_depth):
         """
         Does the recursive job
         """
@@ -117,24 +186,28 @@ class JsonDeref(object):
             # Ok, this object is reference
             if ref is not None:
                 # Get the object reference is pointing to
-                new_obj = self._get_referenced_object(
-                    JsonDeref._parse_ref_string(ref)
+                result = self._get_referenced_object(
+                    current_root, JsonDeref._parse_ref_string(ref)
                 )
 
                 # And do the deref on it again...:)
-                return self._do_deref(new_obj, remaining_depth - 1)
+                return self._do_deref(
+                    result["root"], result["obj"], remaining_depth - 1
+                )
             else:
                 new_obj = {}
                 for key in current_obj:
                     new_obj[key] = self._do_deref(
-                        current_obj[key], remaining_depth
+                        current_root, current_obj[key], remaining_depth
                     )
                 return new_obj
         # List may containg refs
         elif isinstance(current_obj, list):
             new_list = []
             for item in current_obj:
-                new_list.append(self._do_deref(item, remaining_depth))
+                new_list.append(
+                    self._do_deref(current_root, item, remaining_depth)
+                )
             return new_list
         # Anything else can be just returned
         else:
