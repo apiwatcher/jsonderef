@@ -29,9 +29,9 @@ Usage
     "array_ref": [ {"$ref": "#/key"}],
     "nested_ref": { "nest": {"$ref": "#/nested_ref"}}
   }
-  dereferencer = JsonDeref(document)
+  dereferencer = JsonDeref()
 
-  print dereferencer.deref(max_deref_depth=5)
+  print dereferencer.deref(document, max_deref_depth=5)
 
 Tests
 ======
