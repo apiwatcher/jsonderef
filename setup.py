@@ -10,7 +10,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='jsonderef',
-    version='0.1.0',
+    version='1.0.0',
     description='A json dereferencing tool.',
     long_description=long_description,
     url='https://github.com/apiwatcher/jsonderef',
@@ -18,7 +18,7 @@ setup(
     author_email='karel@jakubec.name',
     license='MIT',
     classifiers=[
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Developers',
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Topic :: Software Development :: Libraries',
@@ -28,9 +28,9 @@ setup(
     ],
     keywords='json ref reference dereference schema jsonschema',
     py_modules=["jsonderef"],
-    install_requires=[],
+    install_requires=["requests>=2.18.3"],
     extras_require={
         'dev': ['setuptools'],
-        'test': ['nose'],
+        'test': ['nose', 'httpretty'],
     },
 )
